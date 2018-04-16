@@ -1,58 +1,70 @@
 #!/bin/bash
-DARKNET_FOLDER=$1
-VIDEO=$2
+VIDEO=$1
+WORKINGDIR=$(dirname $0)
 # TODO:
 # [ ]: Logic to prevent bad args
 # [ ]: Defaults everywhere
 # [ ]: List of Videos
 # [ ]: Images
 
-printf "Currently untested DO NOT LET RUN!\r"
-exit 0
+pushd $WORKINGDIR
 
 PREFILE="./.currentFrame.png"
 
 # Download & Make stuff 
-pushd $DARKNET_FOLDER
-[[ -ne ./darknet ]] && make
-[[ -ne ./yolov2-tiny.weights ]] && wget https://pjreddie.com/media/files/yolov2-tiny.weights
+[[ ! -f ./darknet/README.md ]] && git submodule init && git submodule update
+pushd darknet
+[[ ! -f ./darknet ]] && make
+[[ ! -f ./yolov2-tiny.weights ]] && wget https://pjreddie.com/media/files/yolov2-tiny.weights
 popd
 
 if [[ "$(uname)" == "Linux" ]]; then
-    if [[ -ne /dev/ram1 ]]; then
+    printf "Running linux \n"
+    if [[ ! -f /dev/ram1 ]]; then
         ME=$(whoami)
-        sudo mkfs tmpfs /dev/ram1 8M
+        sudo mkfs -q /dev/ram1 8192
         sudo mkdir /tmp/tmp.ramcache -p
         sudo mount /dev/ram1 /tmp/tmp.ramcache
         sudo chown $ME:$ME /tmp/tmp.ramcache -R
         PREFILE="/tmp/tmp.ramcache/.currentFrame.png"
     fi
+    if [[ -f /dev/ram1 ]]; then
+        PREFILE="/tmp/tmp.ramcache/.currentFrame.png"
+    fi
+    echo $PREFILE
 fi
 
-coproc DARK { # then the command; } >/dev/null
+coproc DARK { \
+    pushd $WORKINGDIR/darknet;
+    ./darknet detect \
+    cfg/yolov2-tiny.cfg \
+    yolov2-tiny.weights; popd; \
+} >/dev/null
 
-secondsMax=$(mediainfo $2 --Inform="General;%Duration%")
+secondsMax=$(mediainfo $VIDEO --Inform="General;%Duration%" | xargs -I@ echo "scale=0;@ / 1000" | bc -l )
 startTime=$(date +%s)
-cat <<END > $2.json
-{ "file": "$2",
+cat <<END > $VIDEO.json
+{ "file": "$VIDEO",
   "timeTaken": "N/A GTFO",
   "tags": [
 END
-for seconds in {0..$secondsMax}; do
-    echo $seconds
-    ffmpeg -ss $seconds -vframes 1 $2 $PREFILE
+for seconds in $(seq 0 $secondsMax); do
+    echo "$seconds / $secondsMax"
+    ffmpeg -hide_banner -loglevel panic -ss $seconds -i $VIDEO -vframes 1 $PREFILE -y
 
     echo "$PREFILE" >&"${DARK[1]}"
 
-    while [[ -ne $DARKNET_FOLDER/predictions.json ]]; do
+    while [[ ! -f $WORKINGDIR/darknet/predictions.json ]]; do
         sleep 0.2s
     done
 
-    [[ "$seconds" != "0" ]] && echo "," >> $2.json
-    sed -e "s/\[/\{\"timestamp\":${seconds},\"array\":[/g;s/\]/\]\}/g" predictions.json >> $2.json
-    rm predictions.json
+    [[ "$seconds" != "0" ]] && echo "," >> $VIDEO.json
+    sed -e "s/\[/\{\"timestamp\":${seconds},\"array\":[/g;s/\]/\]\}/g" $WORKINGDIR/darknet/predictions.json >> $VIDEO.json
+    rm $WORKINGDIR/darknet/predictions.json
 done
-echo "]}" >> $2.json
+echo "]}" >> $VIDEO.json
 endTime=$(date +%s)
-exec {DARK[1]}>&-
-sed "s/N\/A GTFO/$(bc -l <<<\"$endTime - $startTime\")/g"
+echo $startTime $endTime
+runningTime=$(bc -l <<< "$endTime - $startTime")
+sed -i -e "s/N\/A GTFO/$runningTime/g" $VIDEO.json
+popd
