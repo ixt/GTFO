@@ -38,19 +38,25 @@ coproc DARK { \
     pushd $WORKINGDIR/darknet;
     ./darknet detect \
     cfg/yolov2-tiny.cfg \
-    yolov2-tiny.weights; popd; \
+    yolov2-tiny.weights; \
+    popd; \
 } >/dev/null
 
-secondsMax=$(mediainfo $VIDEO --Inform="General;%Duration%" | xargs -I@ echo "scale=0;@ / 1000" | bc -l )
+secondsMax=$(mediainfo $VIDEO --Inform="General;%Duration%" \
+    | xargs -I@ echo "scale=0;@ / 1000" \
+    | bc -l )
+
 startTime=$(date +%s)
+
 cat <<END > $VIDEO.json
 { "file": "$VIDEO",
   "timeTaken": "N/A GTFO",
   "tags": [
 END
+
 for seconds in $(seq 0 $secondsMax); do
     echo "$seconds / $secondsMax"
-    ffmpeg -hide_banner -loglevel panic -ss $seconds -i $VIDEO -vframes 1 $PREFILE -y
+    ffmpeg -hide_banner -loglevel error -ss $seconds -i $VIDEO -vframes 1 $PREFILE -y
 
     echo "$PREFILE" >&"${DARK[1]}"
 
@@ -59,9 +65,11 @@ for seconds in $(seq 0 $secondsMax); do
     done
 
     [[ "$seconds" != "0" ]] && echo "," >> $VIDEO.json
+    cat $WORKINGDIR/darknet/predictions.json
     sed -e "s/\[/\{\"timestamp\":${seconds},\"array\":[/g;s/\]/\]\}/g" $WORKINGDIR/darknet/predictions.json >> $VIDEO.json
     rm $WORKINGDIR/darknet/predictions.json
 done
+
 echo "]}" >> $VIDEO.json
 endTime=$(date +%s)
 echo $startTime $endTime
