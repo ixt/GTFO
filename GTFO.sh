@@ -46,6 +46,8 @@ secondsMax=$(mediainfo $VIDEO --Inform="General;%Duration%" \
     | xargs -I@ echo "scale=0;@ / 1000" \
     | bc -l )
 
+echo "" > $WORKINGDIR/darknet/predictions.json
+
 startTime=$(date +%s)
 
 cat <<END > $VIDEO.json
@@ -55,19 +57,19 @@ cat <<END > $VIDEO.json
 END
 
 for seconds in $(seq 0 $secondsMax); do
-    echo "$seconds / $secondsMax"
-    ffmpeg -hide_banner -loglevel error -ss $seconds -i $VIDEO -vframes 1 $PREFILE -y
+    printf "$seconds / $secondsMax \n"
+    ffmpeg -hwaccel vaapi -hide_banner -loglevel fatal -ss $seconds -i $VIDEO -vframes 1  $PREFILE -y
 
     echo "$PREFILE" >&"${DARK[1]}"
 
-    while [[ ! -f $WORKINGDIR/darknet/predictions.json ]]; do
-        sleep 0.2s
+    while :; do
+        grep -q -F "[" $WORKINGDIR/darknet/predictions.json && break
     done
 
     [[ "$seconds" != "0" ]] && echo "," >> $VIDEO.json
     cat $WORKINGDIR/darknet/predictions.json
     sed -e "s/\[/\{\"timestamp\":${seconds},\"array\":[/g;s/\]/\]\}/g" $WORKINGDIR/darknet/predictions.json >> $VIDEO.json
-    rm $WORKINGDIR/darknet/predictions.json
+    printf "" > $WORKINGDIR/darknet/predictions.json
 done
 
 echo "]}" >> $VIDEO.json
